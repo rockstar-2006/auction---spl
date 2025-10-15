@@ -1,0 +1,30 @@
+{
+  "rules": {
+    "config": {
+      ".read": true,
+      ".write": "auth != null && root.child('admins').child(auth.uid).exists()"
+    },
+    "auction": {
+      ".read": true,
+      ".write": "auth != null && root.child('admins').child(auth.uid).exists()"
+    },
+    "players": {
+      ".read": true,
+      ".write": "auth != null && root.child('admins').child(auth.uid).exists()"
+    },
+    "teams": {
+      ".read": true,
+      "$teamId": {
+        ".write": "auth != null && (root.child('admins').child(auth.uid).exists() || root.child('teams').child($teamId).child('userId').val() == auth.uid)"
+      }
+    },
+    "bids": {
+      ".read": true,
+      ".write": "auth != null && root.child('teams').child(newData.child('teamId').val()).child('userId').val() == auth.uid"
+    },
+    "auctionLog": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    }
+  }
+}
