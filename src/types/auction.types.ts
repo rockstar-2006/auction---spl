@@ -1,33 +1,44 @@
-export type AuctionStatus = 'idle'|'running'|'paused'|'completed';
+export type AuctionStatus = 'idle' | 'running' | 'paused' | 'completed';
 
-export interface Config {
-  bidIncrement: number; maxPlayerPrice: number; minTeamSize: number; maxTeamSize: number;
-  totalPurse: number; timerDuration: number; basePrice: number;
-}
-export interface AuctionState {
-  status: AuctionStatus;
-  currentPlayerIndex: number;
-  currentPlayerId: string | null;
-  timerStartTime: number | null;
-  timerEndTime: number | null;
-  timerRemaining: number;
-  isTimerRunning: boolean;
-  totalPlayers: number;
-  soldPlayers: number;
-  createdAt: number;
-  lastUpdated: number;
-}
-export interface Bid {
+export interface SoldPlayerSummary {
   id: string;
-  teamId: string;
+  name: string;
+  role?: string;
+  photoUrl?: string | null;
+  teamId: string | null;
   teamName: string;
+  teamBadge?: string;
   amount: number;
   timestamp: number;
-  playerId: string;
 }
-export interface AuctionLog {
+
+export interface AuctionState {
+  status: AuctionStatus;
+  currentPlayerId: string | null;
+  currentPlayerName: string | null;
+  currentBid: number;
+  currentBidderId: string | null;
+  currentBidderName: string | null;
+  currentBidderBadge?: string | null;
+  timerRemaining: number;
+  isTimerRunning: boolean;
+  timerEndTime: number | null;
+  soldCount: number;
+  unsoldCount: number;
+  totalPlayers: number;
+  announcement?: string | null;
+  auctionPhase?: 'girls' | 'girls_round2' | 'boys' | 'open';
+  lastSoldPlayer?: SoldPlayerSummary | null;
+  lastUpdated: number;
+}
+
+export interface BidLog {
   id: string;
-  action: 'player_sold'|'auction_started'|'auction_paused'|'auction_resumed'|'bid_placed';
-  playerId?: string|null; teamId?: string|null; amount?: number|null;
-  details?: string; timestamp: number;
+  playerId: string;
+  playerName: string;
+  teamId: string;
+  teamName: string;
+  teamBadge?: string;
+  amount: number;
+  timestamp: number;
 }

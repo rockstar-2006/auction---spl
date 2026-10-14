@@ -4,9 +4,58 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>cricket-auction</title>
+    <title>SMVITM SPL Season 2 - Cricket Auction</title>
+
+    <!-- Google Fonts: Outfit (Clean, Modern, Non-cramped Broadcast Headers) + Plus Jakarta Sans & Montserrat (Readable Body) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Montserrat:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+
+    <!-- Tailwind CSS CDN for instant styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['"Plus Jakarta Sans"', 'Montserrat', 'system-ui', 'sans-serif'],
+              display: ['Outfit', '"Plus Jakarta Sans"', 'sans-serif'],
+            },
+            colors: {
+              spl: {
+                cream: '#f8f6f0',
+                creamLight: '#fdfbf7',
+                creamDark: '#eee7d8',
+                ivory: '#f4f0e6',
+                maroon: '#540816',
+                maroonDeep: '#3c040d',
+                maroonLight: '#730d20',
+                gold: '#cfa027',
+                goldLight: '#e5bf5b',
+                goldDark: '#997316',
+                charcoal: '#1c1917',
+                slateMuted: '#645d57',
+                borderLight: '#e5ded1',
+              }
+            },
+            boxShadow: {
+              'card': '0 4px 20px -2px rgba(84, 8, 22, 0.08), 0 2px 6px -1px rgba(0, 0, 0, 0.04)',
+              'card-lg': '0 10px 30px -3px rgba(84, 8, 22, 0.12), 0 4px 12px -2px rgba(0, 0, 0, 0.06)',
+              'gold-glow': '0 0 20px rgba(207, 160, 39, 0.3)',
+              'maroon-glow': '0 4px 25px rgba(84, 8, 22, 0.25)',
+            }
+          }
+        }
+      }
+    </script>
+
+    <!-- SheetJS for parsing Excel sheets (.xlsx) directly in browser -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+    <!-- Canvas Confetti for SOLD celebration effects -->
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.4/dist/confetti.browser.min.js"></script>
   </head>
-  <body>
+  <body class="bg-[#f8f6f0] text-[#1c1917] font-sans antialiased min-h-screen selection:bg-[#540816] selection:text-[#ffd700]">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

@@ -1,19 +1,19 @@
-import { initializeApp } from 'firebase/app';
+import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getDatabase } from 'firebase/database';
-import { getStorage } from 'firebase/storage';
+import { getFirestore } from 'firebase/firestore';
 
-const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  databaseURL: import.meta.env.VITE_FIREBASE_DATABASE_URL,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+export const firebaseConfig = {
+  apiKey: "AIzaSyDIQkOhfIa_l4_97NT1FBb0zb3OsvCSA_A",
+  authDomain: "auction-93b1a.firebaseapp.com",
+  projectId: "auction-93b1a",
+  storageBucket: "auction-93b1a.firebasestorage.app",
+  messagingSenderId: "771300375884",
+  appId: "1:771300375884:web:a0c0af08790a4652bae3e9",
+  measurementId: "G-MDS58SDJVH"
 };
 
-const app = initializeApp(firebaseConfig);
+const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 export const auth = getAuth(app);
-export const db = getDatabase(app);
-export const storage = getStorage(app);
+export const db = getFirestore(app);
+
+export default app;

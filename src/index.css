@@ -1,68 +1,74 @@
-:root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
-
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-a:hover {
-  color: #535bf2;
-}
-
-body {
-  margin: 0;
-  display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
-}
-
-h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
-}
-
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  background-color: #1a1a1a;
-  cursor: pointer;
-  transition: border-color 0.25s;
-}
-button:hover {
-  border-color: #646cff;
-}
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
-}
-
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
+@layer base {
+  * {
+    box-sizing: border-box;
   }
-  a:hover {
-    color: #747bff;
+
+  body {
+    margin: 0;
+    padding: 0;
+    font-family: 'Montserrat', system-ui, sans-serif;
+    background: radial-gradient(circle at 50% 20%, #30040a 0%, #150205 60%, #0d0103 100%);
+    color: #fcfaf7;
+    min-height: 100vh;
   }
-  button {
-    background-color: #f9f9f9;
-  }
+}
+
+/* Premium Gold Text Gradient */
+.text-gold-gradient {
+  background: linear-gradient(135deg, #fff2a3 0%, #ffd700 30%, #f3c64c 60%, #d4af37 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Metallic Championship Gold Button */
+.btn-gold {
+  background: linear-gradient(135deg, #d4af37 0%, #f3c64c 45%, #ffd700 70%, #d4af37 100%);
+  color: #30040a;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-shadow: 0 1px 1px rgba(255, 255, 255, 0.3);
+  box-shadow: 0 4px 20px rgba(212, 175, 55, 0.4);
+  transition: all 0.2s ease-in-out;
+}
+.btn-gold:hover {
+  filter: brightness(1.1);
+  box-shadow: 0 6px 28px rgba(212, 175, 55, 0.6);
+  transform: translateY(-1px);
+}
+.btn-gold:active {
+  transform: translateY(1px);
+}
+
+/* Deep Royal Maroon Card */
+.card-maroon {
+  background: linear-gradient(180deg, rgba(59, 4, 12, 0.85) 0%, rgba(31, 2, 6, 0.95) 100%);
+  border: 1px solid rgba(212, 175, 55, 0.3);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(12px);
+}
+
+/* Gold Badge & Border Accents */
+.border-gold {
+  border-color: rgba(212, 175, 55, 0.35);
+}
+
+.gold-glow {
+  box-shadow: 0 0 25px rgba(212, 175, 55, 0.3);
+}
+
+/* Smooth custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #150205;
+}
+::-webkit-scrollbar-thumb {
+  background: #5e0a16;
+  border-radius: 4px;
+  border: 1px solid rgba(212, 175, 55, 0.2);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #7a0e1e;
 }
