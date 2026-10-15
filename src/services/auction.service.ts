@@ -930,57 +930,62 @@ export async function updateTeam(teamId: string, updates: Partial<TeamInfo>): Pr
   }).catch(() => {});
 }
 
-// Undo / rollback the newest bid on active player
+// Undo / rollback the newest bid on active player (ZERO index required, 100% resilient)
 export async function undoLastBid(playerId: string): Promise<{ success: boolean; message: string }> {
+  // Query recent bids ordered by timestamp only (single-field index, NO composite index required!)
   const bidsRef = collection(db, 'bids');
-  const q = query(
-    bidsRef,
-    where('playerId', '==', playerId),
-    orderBy('timestamp', 'desc')
-  );
+  const q = query(bidsRef, orderBy('timestamp', 'desc'), limit(100));
   const snap = await getDocs(q);
 
-  if (snap.empty) {
+  // Filter in memory for this player's bids
+  const playerBidsDocs = snap.docs.filter(d => d.data().playerId === playerId);
+
+  if (playerBidsDocs.length === 0) {
     return { success: false, message: 'No bids placed on this player to undo.' };
   }
 
-  const latestDoc = snap.docs[0];
+  const latestDoc = playerBidsDocs[0];
   await deleteDoc(latestDoc.ref);
 
-  const remainingBids = snap.docs.slice(1);
+  const remainingBids = playerBidsDocs.slice(1);
   const auctionRef = doc(db, 'auction', AUCTION_DOC_ID);
   const playerRef = doc(db, 'players', playerId);
+
+  const playerSnap = await getDoc(playerRef);
+  const pData = (playerSnap.exists() ? { id: playerSnap.id, ...playerSnap.data() } : null) as Player | null;
 
   if (remainingBids.length > 0) {
     const prevBid = remainingBids[0].data() as BidLog;
     const now = Date.now();
-    await setDoc(auctionRef, {
+    const updatedPlayer = pData ? {
+      ...pData,
+      currentBid: prevBid.amount,
+      currentBidderId: prevBid.teamId,
+      currentBidderName: prevBid.teamName
+    } : null;
+
+    const auctionPayload = {
       currentBid: prevBid.amount,
       currentBidderId: prevBid.teamId,
       currentBidderName: prevBid.teamName,
-      currentBidderBadge: prevBid.teamBadge,
+      currentBidderBadge: prevBid.teamBadge || 'SPL',
+      currentPlayer: updatedPlayer,
       announcement: `↩️ Bid undone! Reverted to ₹${prevBid.amount.toLocaleString()} by ${prevBid.teamName}`,
       lastUpdated: now
-    }, { merge: true });
+    };
 
+    await setDoc(auctionRef, auctionPayload, { merge: true });
     await setDoc(playerRef, {
       currentBid: prevBid.amount,
       currentBidderId: prevBid.teamId,
       currentBidderName: prevBid.teamName
     }, { merge: true });
 
-    mirrorAuctionState({
-      currentBid: prevBid.amount,
-      currentBidderId: prevBid.teamId,
-      currentBidderName: prevBid.teamName,
-      currentBidderBadge: prevBid.teamBadge,
-      announcement: `↩️ Bid undone! Reverted to ₹${prevBid.amount.toLocaleString()} by ${prevBid.teamName}`,
-      lastUpdated: now
-    }).catch(() => {});
-
+    mirrorAuctionState(auctionPayload).catch(() => {});
     mirrorPlayer({
       id: playerId,
-      currentBid: prevBid.amount
+      currentBid: prevBid.amount,
+      soldToTeamId: null
     }).catch(() => {});
 
     return {
@@ -989,45 +994,236 @@ export async function undoLastBid(playerId: string): Promise<{ success: boolean;
     };
   } else {
     // Revert to player's base price
-    const playerSnap = await getDoc(playerRef);
-    const pData = playerSnap.data() as Player;
     const base = pData?.basePrice || 1000;
     const now = Date.now();
+    const updatedPlayer = pData ? {
+      ...pData,
+      currentBid: base,
+      currentBidderId: null,
+      currentBidderName: null
+    } : null;
 
-    await setDoc(auctionRef, {
+    const auctionPayload = {
       currentBid: base,
       currentBidderId: null,
       currentBidderName: null,
       currentBidderBadge: null,
+      currentPlayer: updatedPlayer,
       announcement: `↩️ All bids cleared. Restored opening base price ₹${base.toLocaleString()}`,
       lastUpdated: now
-    }, { merge: true });
+    };
 
+    await setDoc(auctionRef, auctionPayload, { merge: true });
     await setDoc(playerRef, {
       currentBid: base,
       currentBidderId: null,
       currentBidderName: null
     }, { merge: true });
 
-    mirrorAuctionState({
-      currentBid: base,
-      currentBidderId: null,
-      currentBidderName: null,
-      currentBidderBadge: null,
-      announcement: `↩️ All bids cleared. Restored opening base price ₹${base.toLocaleString()}`,
-      lastUpdated: now
-    }).catch(() => {});
-
+    mirrorAuctionState(auctionPayload).catch(() => {});
     mirrorPlayer({
       id: playerId,
-      currentBid: base
+      currentBid: base,
+      soldToTeamId: null
     }).catch(() => {});
 
     return { success: true, message: `Undone bid. Restored base opening price ₹${base.toLocaleString()}` };
   }
 }
 
-// Undo / reopen the last sold player
+// Reset all bids on current active player back to opening base price
+export async function resetActivePlayerBids(playerId: string): Promise<{ success: boolean; message: string }> {
+  const playerRef = doc(db, 'players', playerId);
+  const playerSnap = await getDoc(playerRef);
+  if (!playerSnap.exists()) return { success: false, message: 'Player not found.' };
+
+  const pData = { id: playerSnap.id, ...playerSnap.data() } as Player;
+  const base = pData.basePrice || 1000;
+  const now = Date.now();
+
+  // 1. Delete all recent bids for this player
+  try {
+    const bidsSnap = await getDocs(query(collection(db, 'bids'), orderBy('timestamp', 'desc'), limit(100)));
+    const playerBids = bidsSnap.docs.filter(d => d.data().playerId === playerId);
+    for (const bDoc of playerBids) {
+      await deleteDoc(bDoc.ref);
+    }
+  } catch (err) {
+    console.warn('Error clearing bids:', err);
+  }
+
+  // 2. Reset Player doc
+  const updatedPlayer: Player = {
+    ...pData,
+    status: 'bidding',
+    currentBid: base,
+    currentBidderId: null,
+    currentBidderName: null,
+    soldToTeamId: null,
+    soldToTeamName: null,
+    soldPrice: null
+  };
+  await setDoc(playerRef, updatedPlayer, { merge: true });
+
+  // 3. Reset Auction State
+  const auctionRef = doc(db, 'auction', AUCTION_DOC_ID);
+  const auctionPayload = {
+    status: 'running' as const,
+    currentPlayerId: playerId,
+    currentPlayerName: pData.name,
+    currentPlayer: updatedPlayer,
+    currentBid: base,
+    currentBidderId: null,
+    currentBidderName: null,
+    currentBidderBadge: null,
+    timerRemaining: 20,
+    isTimerRunning: true,
+    timerEndTime: now + 20000,
+    announcement: `🔄 Bids reset for ${pData.name}. Opening at ₹${base.toLocaleString()}!`,
+    lastUpdated: now
+  };
+  await setDoc(auctionRef, auctionPayload, { merge: true });
+
+  mirrorAuctionState(auctionPayload).catch(() => {});
+  mirrorPlayer(updatedPlayer).catch(() => {});
+
+  return {
+    success: true,
+    message: `Reset bidding for ${pData.name} back to opening base price ₹${base.toLocaleString()}!`
+  };
+}
+
+// Reset any individual player (refunds team if sold, resets status to waiting or puts directly on stage)
+export async function resetSinglePlayer(
+  playerId: string,
+  targetMode: 'waiting' | 'stage' = 'waiting'
+): Promise<{ success: boolean; message: string }> {
+  const playerRef = doc(db, 'players', playerId);
+  const playerSnap = await getDoc(playerRef);
+  if (!playerSnap.exists()) return { success: false, message: 'Player not found.' };
+
+  const pData = { id: playerSnap.id, ...playerSnap.data() } as Player;
+  const base = pData.basePrice || 1000;
+
+  // 1. If player was sold, refund the winning team
+  if (pData.status === 'sold' && pData.soldToTeamId) {
+    const teamRef = doc(db, 'teams', pData.soldToTeamId);
+    const teamSnap = await getDoc(teamRef);
+    if (teamSnap.exists()) {
+      const tData = teamSnap.data() as TeamInfo;
+      const refundAmount = pData.soldPrice || pData.currentBid || 0;
+      const updatedPurse = (tData.purseRemaining || 0) + refundAmount;
+      const updatedSpent = Math.max(0, (tData.totalSpent || 0) - refundAmount);
+      const updatedSquad = Math.max(0, (tData.squadSize || 0) - 1);
+      const updatedIds = (tData.playerIds || []).filter(id => id !== playerId);
+
+      await updateDoc(teamRef, {
+        purseRemaining: updatedPurse,
+        totalSpent: updatedSpent,
+        squadSize: updatedSquad,
+        playerIds: arrayRemove(playerId),
+        updatedAt: serverTimestamp()
+      });
+
+      mirrorTeam({
+        id: pData.soldToTeamId,
+        purseRemaining: updatedPurse,
+        totalSpent: updatedSpent,
+        squadSize: updatedSquad,
+        playerIds: updatedIds
+      }).catch(() => {});
+    }
+
+    // Decrement sold count in auction doc
+    await setDoc(doc(db, 'auction', AUCTION_DOC_ID), {
+      soldCount: increment(-1)
+    }, { merge: true });
+  } else if (pData.status === 'unsold') {
+    // Decrement unsold count
+    await setDoc(doc(db, 'auction', AUCTION_DOC_ID), {
+      unsoldCount: increment(-1)
+    }, { merge: true });
+  }
+
+  // 2. Clear bids for this player
+  try {
+    const bidsSnap = await getDocs(query(collection(db, 'bids'), orderBy('timestamp', 'desc'), limit(100)));
+    const playerBids = bidsSnap.docs.filter(d => d.data().playerId === playerId);
+    for (const bDoc of playerBids) {
+      await deleteDoc(bDoc.ref);
+    }
+  } catch {}
+
+  const updatedPlayer: Player = {
+    ...pData,
+    status: targetMode === 'stage' ? 'bidding' : 'waiting',
+    currentBid: base,
+    currentBidderId: null,
+    currentBidderName: null,
+    soldToTeamId: null,
+    soldToTeamName: null,
+    soldPrice: null
+  };
+
+  await setDoc(playerRef, updatedPlayer, { merge: true });
+  mirrorPlayer(updatedPlayer).catch(() => {});
+
+  if (targetMode === 'stage') {
+    await setActivePlayer(updatedPlayer);
+    return {
+      success: true,
+      message: `${pData.name} is now on the live auction stage at opening base price ₹${base.toLocaleString()}!`
+    };
+  }
+
+  return {
+    success: true,
+    message: `${pData.name} has been reset back to Waiting Queue.`
+  };
+}
+
+// Live adjust a team's purse on the fly (add, subtract or set exact amount)
+export async function adjustTeamPurse(
+  teamId: string,
+  amount: number,
+  mode: 'add' | 'set' | 'subtract' = 'add'
+): Promise<{ success: boolean; newPurse: number; message: string }> {
+  const teamRef = doc(db, 'teams', teamId);
+  const teamSnap = await getDoc(teamRef);
+  if (!teamSnap.exists()) {
+    return { success: false, newPurse: 0, message: 'Team not found.' };
+  }
+
+  const tData = teamSnap.data() as TeamInfo;
+  const currentPurse = tData.purseRemaining ?? 100000;
+  let newPurse = currentPurse;
+
+  if (mode === 'add') {
+    newPurse = currentPurse + amount;
+  } else if (mode === 'subtract') {
+    newPurse = Math.max(0, currentPurse - amount);
+  } else if (mode === 'set') {
+    newPurse = Math.max(0, amount);
+  }
+
+  await updateDoc(teamRef, {
+    purseRemaining: newPurse,
+    updatedAt: serverTimestamp()
+  });
+
+  mirrorTeam({
+    id: teamId,
+    purseRemaining: newPurse
+  }).catch(() => {});
+
+  return {
+    success: true,
+    newPurse,
+    message: `${tData.name} purse updated to ₹${newPurse.toLocaleString()}`
+  };
+}
+
+// Undo / reopen the last sold OR unsold player
 export async function undoLastSold(): Promise<{ success: boolean; message: string }> {
   const auctionRef = doc(db, 'auction', AUCTION_DOC_ID);
   const auctionSnap = await getDoc(auctionRef);
@@ -1035,98 +1231,160 @@ export async function undoLastSold(): Promise<{ success: boolean; message: strin
 
   const aData = auctionSnap.data();
   const lastSold = aData.lastSoldPlayer;
-  if (!lastSold || !lastSold.id || !lastSold.teamId) {
-    return { success: false, message: 'No recently sold player found to undo.' };
+  if (!lastSold || !lastSold.id) {
+    return { success: false, message: 'No recently closed player found to undo.' };
   }
 
   const { id: playerId, teamId, amount: soldPrice, name: playerName } = lastSold;
-
-  // 1. Refund the winning team
-  const teamRef = doc(db, 'teams', teamId);
-  const teamSnap = await getDoc(teamRef);
-  let restoredPurse = 100000;
-  let restoredSpent = 0;
-  let restoredSquad = 0;
-  let restoredIds: string[] = [];
-
-  if (teamSnap.exists()) {
-    const tData = teamSnap.data() as TeamInfo;
-    restoredPurse = (tData.purseRemaining || 0) + soldPrice;
-    restoredSpent = Math.max(0, (tData.totalSpent || 0) - soldPrice);
-    restoredSquad = Math.max(0, (tData.squadSize || 0) - 1);
-    restoredIds = (tData.playerIds || []).filter(id => id !== playerId);
-
-    await updateDoc(teamRef, {
-      purseRemaining: restoredPurse,
-      totalSpent: restoredSpent,
-      squadSize: restoredSquad,
-      playerIds: arrayRemove(playerId),
-      updatedAt: serverTimestamp()
-    });
-
-    mirrorTeam({
-      id: teamId,
-      purseRemaining: restoredPurse,
-      totalSpent: restoredSpent,
-      squadSize: restoredSquad,
-      playerIds: restoredIds
-    }).catch(() => {});
-  }
-
-  // 2. Re-open player on auction block
   const playerRef = doc(db, 'players', playerId);
+  const playerSnap = await getDoc(playerRef);
+  const pData = (playerSnap.exists() ? { id: playerSnap.id, ...playerSnap.data() } : null) as Player | null;
+
   const now = Date.now();
 
-  await setDoc(playerRef, {
-    status: 'bidding',
-    currentBid: soldPrice,
-    currentBidderId: teamId,
-    currentBidderName: lastSold.teamName,
-    soldToTeamId: null,
-    soldToTeamName: null,
-    soldPrice: null
-  }, { merge: true });
+  // Case A: Player was officially SOLD to a team
+  if (teamId) {
+    const teamRef = doc(db, 'teams', teamId);
+    const teamSnap = await getDoc(teamRef);
+    let restoredPurse = 100000;
+    let restoredSpent = 0;
+    let restoredSquad = 0;
+    let restoredIds: string[] = [];
 
-  await setDoc(auctionRef, {
-    status: 'running',
-    currentPlayerId: playerId,
-    currentPlayerName: playerName,
-    currentBid: soldPrice,
-    currentBidderId: teamId,
-    currentBidderName: lastSold.teamName,
-    currentBidderBadge: lastSold.teamBadge,
-    soldCount: increment(-1),
-    lastSoldPlayer: null,
-    announcement: `↩️ Sale of ${playerName} reopened! Live auction resumed at ₹${soldPrice.toLocaleString()}`,
-    lastUpdated: now
-  }, { merge: true });
+    if (teamSnap.exists()) {
+      const tData = teamSnap.data() as TeamInfo;
+      restoredPurse = (tData.purseRemaining || 0) + soldPrice;
+      restoredSpent = Math.max(0, (tData.totalSpent || 0) - soldPrice);
+      restoredSquad = Math.max(0, (tData.squadSize || 0) - 1);
+      restoredIds = (tData.playerIds || []).filter(id => id !== playerId);
 
-  mirrorPlayer({
-    id: playerId,
-    status: 'bidding',
-    currentBid: soldPrice,
-    soldToTeamId: null,
-    soldToTeamName: null,
-    soldPrice: null
-  }).catch(() => {});
+      await updateDoc(teamRef, {
+        purseRemaining: restoredPurse,
+        totalSpent: restoredSpent,
+        squadSize: restoredSquad,
+        playerIds: arrayRemove(playerId),
+        updatedAt: serverTimestamp()
+      });
 
-  mirrorAuctionState({
-    status: 'running',
-    currentPlayerId: playerId,
-    currentPlayerName: playerName,
-    currentBid: soldPrice,
-    currentBidderId: teamId,
-    currentBidderName: lastSold.teamName,
-    currentBidderBadge: lastSold.teamBadge,
-    lastSoldPlayer: null,
-    announcement: `↩️ Sale of ${playerName} reopened! Live auction resumed at ₹${soldPrice.toLocaleString()}`,
-    lastUpdated: now
-  }).catch(() => {});
+      mirrorTeam({
+        id: teamId,
+        purseRemaining: restoredPurse,
+        totalSpent: restoredSpent,
+        squadSize: restoredSquad,
+        playerIds: restoredIds
+      }).catch(() => {});
+    }
 
-  return {
-    success: true,
-    message: `Reopened auction for ${playerName}! Refunded ₹${soldPrice.toLocaleString()} to ${lastSold.teamName}.`
-  };
+    const restoredPlayer: Player = {
+      ...(pData || {
+        id: playerId,
+        serialNo: '001',
+        name: playerName,
+        role: lastSold.role || 'All-Rounder',
+        category: 'Standard',
+        battingStyle: 'Right Hand',
+        bowlingStyle: 'Right Arm',
+        contact: '',
+        photoUrl: lastSold.photoUrl || null,
+        basePrice: 1000,
+        auctionOrder: 1,
+        createdAt: now
+      }),
+      status: 'bidding',
+      currentBid: soldPrice,
+      currentBidderId: teamId,
+      currentBidderName: lastSold.teamName,
+      soldToTeamId: null,
+      soldToTeamName: null,
+      soldPrice: null
+    };
+
+    await setDoc(playerRef, restoredPlayer, { merge: true });
+
+    const auctionPayload = {
+      status: 'running' as const,
+      currentPlayerId: playerId,
+      currentPlayerName: playerName,
+      currentPlayer: restoredPlayer,
+      currentBid: soldPrice,
+      currentBidderId: teamId,
+      currentBidderName: lastSold.teamName,
+      currentBidderBadge: lastSold.teamBadge || 'SPL',
+      timerRemaining: 20,
+      isTimerRunning: true,
+      timerEndTime: now + 20000,
+      soldCount: increment(-1),
+      lastSoldPlayer: null,
+      announcement: `↩️ Sale of ${playerName} reopened! Live auction resumed at ₹${soldPrice.toLocaleString()}`,
+      lastUpdated: now
+    };
+
+    await setDoc(auctionRef, auctionPayload, { merge: true });
+    mirrorPlayer(restoredPlayer).catch(() => {});
+    const { soldCount, ...mirrorPayload } = auctionPayload;
+    mirrorAuctionState(mirrorPayload).catch(() => {});
+
+    return {
+      success: true,
+      message: `Reopened auction for ${playerName}! Refunded ₹${soldPrice.toLocaleString()} to ${lastSold.teamName}.`
+    };
+  } else {
+    // Case B: Player was marked UNSOLD by mistake
+    const base = pData?.basePrice || 1000;
+    const restoredPlayer: Player = {
+      ...(pData || {
+        id: playerId,
+        serialNo: '001',
+        name: playerName,
+        role: lastSold.role || 'All-Rounder',
+        category: 'Standard',
+        battingStyle: 'Right Hand',
+        bowlingStyle: 'Right Arm',
+        contact: '',
+        photoUrl: lastSold.photoUrl || null,
+        basePrice: 1000,
+        auctionOrder: 1,
+        createdAt: now
+      }),
+      status: 'bidding',
+      currentBid: base,
+      currentBidderId: null,
+      currentBidderName: null,
+      soldToTeamId: null,
+      soldToTeamName: null,
+      soldPrice: null
+    };
+
+    await setDoc(playerRef, restoredPlayer, { merge: true });
+
+    const auctionPayload = {
+      status: 'running' as const,
+      currentPlayerId: playerId,
+      currentPlayerName: playerName,
+      currentPlayer: restoredPlayer,
+      currentBid: base,
+      currentBidderId: null,
+      currentBidderName: null,
+      currentBidderBadge: null,
+      timerRemaining: 20,
+      isTimerRunning: true,
+      timerEndTime: now + 20000,
+      unsoldCount: increment(-1),
+      lastSoldPlayer: null,
+      announcement: `↩️ Unsold status cleared for ${playerName}! Back on the live block at ₹${base.toLocaleString()}`,
+      lastUpdated: now
+    };
+
+    await setDoc(auctionRef, auctionPayload, { merge: true });
+    mirrorPlayer(restoredPlayer).catch(() => {});
+    const { unsoldCount, ...mirrorPayload } = auctionPayload;
+    mirrorAuctionState(mirrorPayload).catch(() => {});
+
+    return {
+      success: true,
+      message: `Reopened auction for ${playerName}! Restored to live auction block.`
+    };
+  }
 }
 
 

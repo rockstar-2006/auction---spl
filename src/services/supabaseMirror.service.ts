@@ -75,8 +75,8 @@ export async function mirrorAuctionState(state: Partial<AuctionState>): Promise<
     if (state.timerRemaining !== undefined) payload.timer_remaining = state.timerRemaining;
     if (state.isTimerRunning !== undefined) payload.is_timer_running = Boolean(state.isTimerRunning);
     if (state.timerEndTime !== undefined) payload.timer_end_time = state.timerEndTime;
-    if (state.soldCount !== undefined) payload.sold_count = state.soldCount;
-    if (state.unsoldCount !== undefined) payload.unsold_count = state.unsoldCount;
+    if (typeof state.soldCount === 'number') payload.sold_count = state.soldCount;
+    if (typeof state.unsoldCount === 'number') payload.unsold_count = state.unsoldCount;
     if (state.totalPlayers !== undefined) payload.total_players = state.totalPlayers;
     if (state.auctionPhase !== undefined) payload.auction_phase = state.auctionPhase;
     if (state.announcement !== undefined) payload.announcement = state.announcement;

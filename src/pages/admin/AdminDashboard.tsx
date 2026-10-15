@@ -30,7 +30,10 @@ import {
   updateTeam,
   undoLastBid,
   undoLastSold,
-  setAuctionPhase
+  setAuctionPhase,
+  resetActivePlayerBids,
+  resetSinglePlayer,
+  adjustTeamPurse
 } from '../../services/auction.service';
 import {
   syncAllToSupabase,
@@ -84,7 +87,8 @@ import {
   UserCheck,
   Palette,
   Upload,
-  Database
+  Database,
+  Coins
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import splBanner from '../../../image.png';
@@ -201,6 +205,15 @@ export default function AdminDashboard() {
 
   // Undo Action State
   const [undoLoading, setUndoLoading] = useState(false);
+
+  // Purse Quick Adjustment Modal State
+  const [showPurseModal, setShowPurseModal] = useState(false);
+  const [selectedTeamForPurse, setSelectedTeamForPurse] = useState<TeamInfo | null>(null);
+  const [purseAdjustAmount, setPurseAdjustAmount] = useState('1000');
+  const [purseAdjustLoading, setPurseAdjustLoading] = useState(false);
+
+  // Player Reset Action State
+  const [playerResetLoading, setPlayerResetLoading] = useState(false);
 
   useEffect(() => {
     const unsubStatus = subscribeDbStatus(setDbStatus);
@@ -779,9 +792,12 @@ export default function AdminDashboard() {
       toast.error('No recent sale found to undo.');
       return;
     }
-    const confirmUndo = window.confirm(
-      `Reopen auction for ${auction.lastSoldPlayer.name}?\n\nThis will refund ₹${auction.lastSoldPlayer.amount.toLocaleString()} to ${auction.lastSoldPlayer.teamName} and reopen bidding on the live stage.`
-    );
+    const isUnsold = !auction.lastSoldPlayer.teamId;
+    const confirmMsg = isUnsold
+      ? `Reopen auction for ${auction.lastSoldPlayer.name}?\n\nThis will remove the UNSOLD status and put ${auction.lastSoldPlayer.name} back on the live auction block.`
+      : `Reopen auction for ${auction.lastSoldPlayer.name}?\n\nThis will refund ₹${auction.lastSoldPlayer.amount.toLocaleString()} to ${auction.lastSoldPlayer.teamName} and reopen bidding on the live stage.`;
+
+    const confirmUndo = window.confirm(confirmMsg);
     if (!confirmUndo) return;
 
     setUndoLoading(true);
@@ -794,9 +810,90 @@ export default function AdminDashboard() {
         toast.error(res.message);
       }
     } catch (err: any) {
-      toast.error('Undo sold failed: ' + err.message);
+      toast.error('Undo failed: ' + err.message);
     } finally {
       setUndoLoading(false);
+    }
+  };
+
+  const handleOpenPurseAdjust = (team: TeamInfo) => {
+    setSelectedTeamForPurse(team);
+    setPurseAdjustAmount('1000');
+    setShowPurseModal(true);
+  };
+
+  const handleApplyPurseAdjust = async (mode: 'add' | 'set' | 'subtract') => {
+    if (!selectedTeamForPurse) return;
+    const amt = parseInt(purseAdjustAmount, 10);
+    if (isNaN(amt) || amt < 0) {
+      toast.error('Please enter a valid amount');
+      return;
+    }
+    setPurseAdjustLoading(true);
+    try {
+      const res = await adjustTeamPurse(selectedTeamForPurse.id, amt, mode);
+      if (res.success) {
+        sounds.playBidChime();
+        toast.success(res.message, { icon: '💰', duration: 4000 });
+        setShowPurseModal(false);
+      } else {
+        toast.error(res.message);
+      }
+    } catch (err: any) {
+      toast.error('Failed to adjust purse: ' + err.message);
+    } finally {
+      setPurseAdjustLoading(false);
+    }
+  };
+
+  const handleResetActivePlayerBids = async () => {
+    if (!currentPlayer) {
+      toast.error('No player currently on auction block.');
+      return;
+    }
+    const confirmReset = window.confirm(
+      `Reset all bids for ${currentPlayer.name}?\n\nThis will clear all current bids, restore opening base price ₹${(currentPlayer.basePrice || 1000).toLocaleString()}, and allow all teams to start bidding fresh.`
+    );
+    if (!confirmReset) return;
+
+    setPlayerResetLoading(true);
+    try {
+      const res = await resetActivePlayerBids(currentPlayer.id);
+      if (res.success) {
+        sounds.playBidChime();
+        toast.success(res.message, { icon: '🔄', duration: 5000 });
+      } else {
+        toast.error(res.message);
+      }
+    } catch (err: any) {
+      toast.error('Reset bids failed: ' + err.message);
+    } finally {
+      setPlayerResetLoading(false);
+    }
+  };
+
+  const handleResetSinglePlayer = async (player: Player, targetMode: 'waiting' | 'stage') => {
+    const isSold = player.status === 'sold';
+    const confirmMsg = isSold
+      ? `Reset and free ${player.name}?\n\nThis will refund ₹${(player.soldPrice || 0).toLocaleString()} to ${player.soldToTeamName || 'the winning team'}, remove them from the squad, and ${targetMode === 'stage' ? 'put them directly onto the live auction stage' : 'return them to waiting queue'}.`
+      : `Reset ${player.name} to ${targetMode === 'stage' ? 'live auction stage' : 'waiting queue'}?`;
+
+    const confirm = window.confirm(confirmMsg);
+    if (!confirm) return;
+
+    setPlayerResetLoading(true);
+    try {
+      const res = await resetSinglePlayer(player.id, targetMode);
+      if (res.success) {
+        sounds.playBidChime();
+        toast.success(res.message, { icon: '🔄', duration: 5000 });
+      } else {
+        toast.error(res.message);
+      }
+    } catch (err: any) {
+      toast.error('Reset player failed: ' + err.message);
+    } finally {
+      setPlayerResetLoading(false);
     }
   };
 
@@ -1309,18 +1406,27 @@ export default function AdminDashboard() {
                         </button>
                       </div>
 
-                      {/* UNDO LAST BID (Mistake/Correction) */}
-                      {auction?.currentBidderId && (
+                      {/* UNDO & RESET BID CONTROLS */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
                         <button
                           onClick={handleUndoBid}
-                          disabled={undoLoading}
-                          className="w-full py-2.5 px-4 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition active:scale-95 cursor-pointer shadow-xs"
-                          title="Mistaken paddle? Roll back to previous team or base price"
+                          disabled={undoLoading || !auction?.currentBidderId}
+                          className="py-2.5 px-3 bg-amber-50 hover:bg-amber-100 disabled:opacity-40 disabled:cursor-not-allowed text-amber-900 border border-amber-300 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer shadow-xs"
+                          title="Roll back to previous bid or base price"
                         >
                           <Undo2 className="w-4 h-4 text-amber-700" />
-                          <span>{undoLoading ? 'Rolling back bid...' : '↩️ UNDO LAST BID (Mistake / Wrong Paddle)'}</span>
+                          <span>{undoLoading ? 'Rolling back...' : '↩️ UNDO LAST BID'}</span>
                         </button>
-                      )}
+                        <button
+                          onClick={handleResetActivePlayerBids}
+                          disabled={playerResetLoading}
+                          className="py-2.5 px-3 bg-rose-50 hover:bg-rose-100 disabled:opacity-40 disabled:cursor-not-allowed text-rose-900 border border-rose-300 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer shadow-xs"
+                          title="Reset bidding for this player back to opening base price"
+                        >
+                          <RotateCcw className="w-4 h-4 text-rose-700" />
+                          <span>{playerResetLoading ? 'Resetting...' : '🔄 RESET PLAYER BIDS'}</span>
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ) : (
@@ -1338,7 +1444,7 @@ export default function AdminDashboard() {
                             Recruited by <strong className="text-[#540816]">[{auction.lastSoldPlayer.teamBadge}] {auction.lastSoldPlayer.teamName}</strong> for <strong className="text-emerald-700 font-mono text-base font-black">₹{auction.lastSoldPlayer.amount.toLocaleString()}</strong>
                           </div>
                         ) : (
-                          <div className="text-sm text-rose-700 font-medium">Passed without bids. Available in round 2.</div>
+                          <div className="text-sm text-rose-700 font-medium">Passed without bids. Available to re-auction anytime!</div>
                         )}
                         <div className="pt-2 flex flex-wrap items-center justify-center gap-3">
                           <button
@@ -1348,17 +1454,21 @@ export default function AdminDashboard() {
                             <SkipForward className="w-4 h-4" />
                             <span>LOAD NEXT PLAYER</span>
                           </button>
-                          {auction.lastSoldPlayer.teamId && (
-                            <button
-                              onClick={handleUndoLastSold}
-                              disabled={undoLoading}
-                              className="bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-400 font-bold text-xs uppercase px-5 py-3 rounded-xl shadow-sm inline-flex items-center gap-2 transition active:scale-95 cursor-pointer"
-                              title="Reopen auction for this player if marked sold by mistake"
-                            >
-                              <Undo2 className="w-4 h-4 text-amber-700" />
-                              <span>{undoLoading ? 'Reopening...' : '↩️ REOPEN / UNDO SALE'}</span>
-                            </button>
-                          )}
+                          <button
+                            onClick={handleUndoLastSold}
+                            disabled={undoLoading}
+                            className="bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-400 font-bold text-xs uppercase px-5 py-3 rounded-xl shadow-sm inline-flex items-center gap-2 transition active:scale-95 cursor-pointer"
+                            title={auction.lastSoldPlayer.teamId ? 'Reopen auction and refund team' : 'Reopen auction for this unsold player'}
+                          >
+                            <Undo2 className="w-4 h-4 text-amber-700" />
+                            <span>
+                              {undoLoading
+                                ? 'Reopening...'
+                                : auction.lastSoldPlayer.teamId
+                                ? '↩️ REOPEN / UNDO SALE'
+                                : '↩️ REOPEN / UNDO UNSOLD'}
+                            </span>
+                          </button>
                         </div>
                       </div>
                     ) : (
@@ -1605,8 +1715,15 @@ export default function AdminDashboard() {
                             </div>
 
                             <div className="flex items-center justify-between mt-1">
-                              <span className="text-[10px] font-mono font-bold text-emerald-700">
-                                ₹ {(t.purseRemaining || 0).toLocaleString()}
+                              <span
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleOpenPurseAdjust(t);
+                                }}
+                                className="text-[10px] font-mono font-bold text-emerald-700 hover:text-emerald-950 hover:underline cursor-pointer flex items-center gap-0.5"
+                                title="Click to add or adjust purse money for this team"
+                              >
+                                ₹ {(t.purseRemaining || 0).toLocaleString()} ✏️
                               </span>
                               {lockBadge && (
                                 <span className="text-[8px] bg-slate-600 text-white font-bold px-1.5 py-0.5 rounded">
@@ -2002,17 +2119,45 @@ export default function AdminDashboard() {
                         </td>
                         <td className="p-3 text-right">
                           <div className="flex items-center justify-end gap-1.5">
+                            {/* Re-Auction / Send to Stage Button */}
                             <button
-                              onClick={() => handleSelectPlayer(p)}
+                              onClick={() => {
+                                if (p.status === 'sold') {
+                                  handleResetSinglePlayer(p, 'stage');
+                                } else {
+                                  handleSelectPlayer(p);
+                                }
+                              }}
                               className={`font-bold px-2.5 py-1.5 rounded-lg text-xs transition cursor-pointer shadow-sm ${
-                                p.status === 'unsold'
+                                p.status === 'sold'
+                                  ? 'bg-amber-600 hover:bg-amber-700 text-white'
+                                  : p.status === 'unsold'
                                   ? 'bg-amber-600 hover:bg-amber-700 text-white'
                                   : 'bg-[#540816] hover:bg-[#6e0b1f] text-[#ffd700]'
                               }`}
-                              title={p.status === 'unsold' ? 'Re-Auction this unsold player in Round 2' : 'Send to Auction Block'}
+                              title={
+                                p.status === 'sold'
+                                  ? 'Refund team & Re-Auction player on live stage'
+                                  : p.status === 'unsold'
+                                  ? 'Put unsold player on live stage'
+                                  : 'Send player to auction block'
+                              }
                             >
-                              {p.status === 'unsold' ? '🔁 Re-Auction' : 'Auction'}
+                              {p.status === 'sold' ? '🔁 Re-Auction' : p.status === 'unsold' ? '🔁 Re-Auction' : 'Auction'}
                             </button>
+
+                            {/* Reset to Waiting Button (if sold or unsold or bidding) */}
+                            {(p.status === 'sold' || p.status === 'unsold' || p.status === 'bidding') && (
+                              <button
+                                onClick={() => handleResetSinglePlayer(p, 'waiting')}
+                                disabled={playerResetLoading}
+                                className="bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-300 font-bold px-2 py-1.5 rounded-lg text-xs transition cursor-pointer shadow-sm"
+                                title="Reset player back to waiting pool (refunds team if sold)"
+                              >
+                                🔄 Reset
+                              </button>
+                            )}
+
                             <button
                               onClick={() => handleOpenEdit(p)}
                               className="bg-[#f4efe6] hover:bg-[#ebdcc4] text-[#540816] border border-[#cfa027]/50 p-1.5 rounded-lg text-xs transition cursor-pointer shadow-sm"
@@ -2153,30 +2298,38 @@ export default function AdminDashboard() {
                       </div>
                     </div>
 
-                    {/* Team Action Buttons: View Squad, Edit, Reset */}
-                    <div className="grid grid-cols-3 gap-2 mt-2 pt-3 border-t border-[#e5ded1]">
+                    {/* Team Action Buttons: View Squad, Adjust Purse, Edit, Reset */}
+                    <div className="grid grid-cols-4 gap-1.5 mt-2 pt-3 border-t border-[#e5ded1]">
                       <button
                         onClick={() => handleOpenInspectSquad(t)}
-                        className="py-2 px-2 bg-[#540816] hover:bg-[#6e0b1f] text-[#ffd700] rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition active:scale-95 cursor-pointer shadow-sm"
+                        className="py-2 px-1 bg-[#540816] hover:bg-[#6e0b1f] text-[#ffd700] rounded-xl text-[11px] font-bold flex items-center justify-center gap-0.5 transition active:scale-95 cursor-pointer shadow-sm"
                         title="View full player squad for this team"
                       >
-                        <Users className="w-3.5 h-3.5" />
+                        <Users className="w-3 h-3" />
                         <span>Squad</span>
                       </button>
                       <button
+                        onClick={() => handleOpenPurseAdjust(t)}
+                        className="py-2 px-1 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-[11px] font-bold flex items-center justify-center gap-0.5 transition active:scale-95 cursor-pointer shadow-sm"
+                        title="Quick add or adjust purse money for this team"
+                      >
+                        <Coins className="w-3 h-3" />
+                        <span>+ Purse</span>
+                      </button>
+                      <button
                         onClick={() => handleOpenEditTeam(t)}
-                        className="py-2 px-2 bg-[#f4efe6] hover:bg-[#ebdcc4] text-[#540816] border border-[#cfa027]/50 rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition active:scale-95 cursor-pointer shadow-sm"
+                        className="py-2 px-1 bg-[#f4efe6] hover:bg-[#ebdcc4] text-[#540816] border border-[#cfa027]/50 rounded-xl text-[11px] font-bold flex items-center justify-center gap-0.5 transition active:scale-95 cursor-pointer shadow-sm"
                         title="Edit team name, badge, colors, purse"
                       >
-                        <Edit2 className="w-3.5 h-3.5" />
+                        <Edit2 className="w-3 h-3" />
                         <span>Edit</span>
                       </button>
                       <button
                         onClick={() => handleOpenTeamReset(t)}
-                        className="py-2 px-2 bg-amber-50 hover:bg-amber-100 text-[#540816] border border-amber-300 rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition active:scale-95 cursor-pointer shadow-sm"
+                        className="py-2 px-1 bg-amber-50 hover:bg-amber-100 text-[#540816] border border-amber-300 rounded-xl text-[11px] font-bold flex items-center justify-center gap-0.5 transition active:scale-95 cursor-pointer shadow-sm"
                         title="Reset purse for this team"
                       >
-                        <RotateCcw className="w-3.5 h-3.5 text-[#997316]" />
+                        <RotateCcw className="w-3 h-3 text-[#997316]" />
                         <span>Reset</span>
                       </button>
                     </div>
@@ -2965,6 +3118,112 @@ export default function AdminDashboard() {
           </div>
         );
       })()}
+
+      {/* ================= MODAL: QUICK ADJUST TEAM PURSE ================= */}
+      {showPurseModal && selectedTeamForPurse && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white border-2 border-[#cfa027] rounded-3xl max-w-md w-full shadow-2xl p-6 relative animate-in fade-in zoom-in-95 duration-200">
+            <button
+              onClick={() => setShowPurseModal(false)}
+              className="absolute top-5 right-5 text-slate-400 hover:text-slate-600 p-1.5 rounded-lg transition cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-3 mb-4">
+              <TeamBadge team={selectedTeamForPurse} className="w-12 h-12 rounded-2xl text-sm" />
+              <div>
+                <div className="text-[10px] font-bold uppercase text-[#997316]">Team Purse Adjustment</div>
+                <h3 className="font-display font-black text-lg text-[#540816] leading-tight">
+                  {selectedTeamForPurse.name}
+                </h3>
+                <span className="text-xs font-mono font-bold text-[#645d57]">
+                  {selectedTeamForPurse.shortName}
+                </span>
+              </div>
+            </div>
+
+            {/* Current Balance Banner */}
+            <div className="bg-[#f8f6f0] border border-[#cfa027]/40 rounded-2xl p-4 mb-5 text-center">
+              <div className="text-xs text-[#645d57] font-semibold">Current Available Purse</div>
+              <div className="text-3xl font-display font-black text-emerald-700 font-mono mt-0.5">
+                ₹ {(selectedTeamForPurse.purseRemaining || 0).toLocaleString()}
+              </div>
+            </div>
+
+            {/* Adjustment Amount Input */}
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-[#540816] mb-1.5">
+                  Amount to Add / Set (₹)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="500"
+                  value={purseAdjustAmount}
+                  onChange={e => setPurseAdjustAmount(e.target.value)}
+                  placeholder="e.g. 1000"
+                  className="w-full bg-[#f8f6f0] border-2 border-[#cfa027]/60 rounded-xl p-3 text-lg text-[#1c1917] font-mono font-black focus:outline-none focus:ring-2 focus:ring-[#540816]"
+                />
+              </div>
+
+              {/* Quick Chip Shortcuts */}
+              <div>
+                <div className="text-[10px] font-bold text-[#645d57] uppercase mb-1.5">Quick Amounts:</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {[500, 1000, 2000, 5000, 10000].map(val => (
+                    <button
+                      key={val}
+                      type="button"
+                      onClick={() => setPurseAdjustAmount(String(val))}
+                      className="px-2.5 py-1 bg-[#f4efe6] hover:bg-[#ebdcc4] text-[#540816] border border-[#cfa027]/40 rounded-lg text-xs font-mono font-bold transition active:scale-95 cursor-pointer"
+                    >
+                      +{val >= 1000 ? `${val / 1000}k` : val}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Action Buttons: Add, Set, Deduct */}
+              <div className="pt-2 space-y-2 border-t border-[#e5ded1]">
+                <button
+                  type="button"
+                  disabled={purseAdjustLoading}
+                  onClick={() => handleApplyPurseAdjust('add')}
+                  className="w-full py-3 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white font-display font-black text-xs uppercase tracking-wider rounded-xl shadow-md transition flex items-center justify-center gap-2 cursor-pointer active:scale-95"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>
+                    {purseAdjustLoading
+                      ? 'Updating...'
+                      : `ADD ₹${(parseInt(purseAdjustAmount) || 0).toLocaleString()} TO PURSE (New: ₹${((selectedTeamForPurse.purseRemaining || 0) + (parseInt(purseAdjustAmount) || 0)).toLocaleString()})`}
+                  </span>
+                </button>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    disabled={purseAdjustLoading}
+                    onClick={() => handleApplyPurseAdjust('set')}
+                    className="py-2.5 bg-[#540816] hover:bg-[#6e0b1f] disabled:opacity-50 text-[#ffd700] border border-[#cfa027] font-bold text-xs uppercase rounded-xl transition cursor-pointer active:scale-95"
+                  >
+                    Set Exact (₹{(parseInt(purseAdjustAmount) || 0).toLocaleString()})
+                  </button>
+                  <button
+                    type="button"
+                    disabled={purseAdjustLoading}
+                    onClick={() => handleApplyPurseAdjust('subtract')}
+                    className="py-2.5 bg-rose-50 hover:bg-rose-100 disabled:opacity-50 text-rose-800 border border-rose-300 font-bold text-xs uppercase rounded-xl transition cursor-pointer active:scale-95"
+                  >
+                    - Deduct ₹{(parseInt(purseAdjustAmount) || 0).toLocaleString()}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
