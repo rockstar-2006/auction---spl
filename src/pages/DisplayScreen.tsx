@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { db } from '../services/firebase';
-import { doc, onSnapshot, collection, query, orderBy } from 'firebase/firestore';
+import { doc, onSnapshot, collection, query, orderBy, limit } from 'firebase/firestore';
 import { AUCTION_DOC_ID } from '../services/auction.service';
 import {
   listenToAuctionState,
@@ -99,10 +99,16 @@ export default function DisplayScreen() {
     };
   }, []);
 
-  // 2. Track Current Player from allPlayers cache or direct fetch
+  // 2. Track Current Player from embedded auction payload, allPlayers cache or direct fetch
   useEffect(() => {
     if (!auction?.currentPlayerId) {
       setPlayer(null);
+      return;
+    }
+    // High-performance optimization: If auction doc already embeds the currentPlayer, use it immediately (0 extra reads!)
+    if (auction.currentPlayer && auction.currentPlayer.id === auction.currentPlayerId) {
+      setPlayer(auction.currentPlayer);
+      lastActivePlayerRef.current = auction.currentPlayer;
       return;
     }
     const found = allPlayers.find(p => p.id === auction.currentPlayerId);
@@ -119,7 +125,7 @@ export default function DisplayScreen() {
       }, () => {});
       return () => unsubPlayer();
     }
-  }, [auction?.currentPlayerId, allPlayers]);
+  }, [auction?.currentPlayerId, auction?.currentPlayer, allPlayers]);
 
 
   // Is the player on screen officially SOLD?
@@ -148,13 +154,13 @@ export default function DisplayScreen() {
 
   const targetPlayerId = auction?.currentPlayerId || auction?.lastSoldPlayer?.id;
 
-  // 5. Listen to Live Bids for Current or Sold Player
+  // 5. Listen to Live Bids for Current or Sold Player (capped to 20 to protect quotas)
   useEffect(() => {
     if (!targetPlayerId) {
       setRecentBids([]);
       return;
     }
-    const bidsQ = query(collection(db, 'bids'), orderBy('timestamp', 'desc'));
+    const bidsQ = query(collection(db, 'bids'), orderBy('timestamp', 'desc'), limit(20));
     const unsubBids = onSnapshot(bidsQ, (snap) => {
       const blist: BidLog[] = [];
       snap.forEach(d => {
@@ -347,11 +353,11 @@ export default function DisplayScreen() {
       </header>
 
       {/* ================= 2. MAIN 3-COLUMN BROADCAST STAGE ================= */}
-      <main className="flex-1 h-[88vh] px-6 py-4 flex items-center justify-center z-10 overflow-hidden">
+      <main className="flex-1 min-h-[88vh] lg:h-[88vh] px-3 sm:px-6 py-4 flex items-center justify-center z-10 overflow-y-auto lg:overflow-hidden">
         {displayPlayer ? (
-          <div className="w-full h-full grid grid-cols-12 gap-5 items-stretch animate-in fade-in zoom-in-95 duration-300">
-            {/* ── LEFT COLUMN (Col 1-4): BIG PROMINENT PLAYER PHOTO & PROFILE ── */}
-            <div className="col-span-4 bg-white border-2 border-[#cfa027] rounded-3xl p-5 shadow-card-lg relative flex flex-col justify-between items-center text-center">
+          <div className="w-full h-full grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch animate-in fade-in zoom-in-95 duration-300">
+            {/* ── LEFT COLUMN: BIG PROMINENT PLAYER PHOTO & PROFILE ── */}
+            <div className="col-span-12 lg:col-span-4 bg-white border-2 border-[#cfa027] rounded-3xl p-5 shadow-card-lg relative flex flex-col justify-between items-center text-center">
               {/* Role & Female Badges */}
               <div className="w-full flex items-center justify-between">
                 <div className="flex items-center gap-1.5">
@@ -426,8 +432,8 @@ export default function DisplayScreen() {
               </div>
             </div>
 
-            {/* ── MIDDLE COLUMN (Col 5-8): DETAILS & GIANT LIVE BID BOX ── */}
-            <div className="col-span-4 flex flex-col justify-between space-y-4">
+            {/* ── MIDDLE COLUMN: DETAILS & GIANT LIVE BID BOX ── */}
+            <div className="col-span-12 lg:col-span-4 flex flex-col justify-between space-y-4">
               {/* Player Name & Style Ribbon */}
               <div className="bg-white border-2 border-[#cfa027]/40 rounded-3xl p-5 shadow-card text-center">
                 <h2 className="text-3xl lg:text-4xl font-display font-black text-[#540816] tracking-tight uppercase leading-tight">
@@ -527,8 +533,8 @@ export default function DisplayScreen() {
               </div>
             </div>
 
-            {/* ── RIGHT COLUMN (Col 9-12): 12 TEAMS LIVE TABLE WITH FLOATING ANIMATION ── */}
-            <div className="col-span-4 bg-white border-2 border-[#cfa027] rounded-3xl p-4 shadow-card-lg flex flex-col justify-between overflow-hidden">
+            {/* ── RIGHT COLUMN: 12 TEAMS LIVE TABLE WITH FLOATING ANIMATION ── */}
+            <div className="col-span-12 lg:col-span-4 bg-white border-2 border-[#cfa027] rounded-3xl p-4 shadow-card-lg flex flex-col justify-between overflow-hidden min-h-[420px] lg:min-h-0">
               <div className="flex items-center justify-between pb-2 mb-2 border-b border-[#e5ded1]">
                 <div className="flex items-center gap-2">
                   <Trophy className="w-4 h-4 text-[#cfa027]" />

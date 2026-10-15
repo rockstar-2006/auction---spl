@@ -155,6 +155,7 @@ export async function setActivePlayer(player: Player): Promise<void> {
     status: 'running',
     currentPlayerId: player.id,
     currentPlayerName: player.name,
+    currentPlayer: player,
     currentBid: basePrice,
     currentBidderId: null,
     currentBidderName: null,
@@ -169,20 +170,24 @@ export async function setActivePlayer(player: Player): Promise<void> {
     auctionUpdates.unsoldCount = increment(-1);
   }
 
-  // Use setDoc with { merge: true } so it creates or updates safely
-  await setDoc(auctionRef, auctionUpdates, { merge: true });
+  try {
+    // Use setDoc with { merge: true } so it creates or updates safely
+    await setDoc(auctionRef, auctionUpdates, { merge: true });
 
-  await setDoc(playerRef, {
-    status: 'bidding',
-    currentBid: basePrice,
-    currentBidderId: null,
-    currentBidderName: null,
-    soldToTeamId: null,
-    soldToTeamName: null,
-    soldPrice: null
-  }, { merge: true });
+    await setDoc(playerRef, {
+      status: 'bidding',
+      currentBid: basePrice,
+      currentBidderId: null,
+      currentBidderName: null,
+      soldToTeamId: null,
+      soldToTeamName: null,
+      soldPrice: null
+    }, { merge: true });
+  } catch (err: any) {
+    console.warn('Firestore setActivePlayer warning, writing to Supabase mirror:', err?.message || err);
+  }
 
-  // Secondary dual-write to Supabase
+  // Secondary dual-write to Supabase (guaranteed)
   mirrorAuctionState(auctionUpdates).catch(() => {});
   mirrorPlayer({
     id: player.id,
@@ -209,38 +214,42 @@ export async function placeBid(
   const now = Date.now();
   const resetDuration = 15; // 15 seconds after each bid
 
-  // Update auction state safely
-  await setDoc(auctionRef, {
-    currentBid: newAmount,
-    currentBidderId: teamId,
-    currentBidderName: teamName,
-    currentBidderBadge: teamBadge,
-    timerRemaining: resetDuration,
-    isTimerRunning: true,
-    timerEndTime: now + resetDuration * 1000,
-    announcement: `Bid: ₹${newAmount.toLocaleString()} by ${teamName}`,
-    lastUpdated: now
-  }, { merge: true });
+  try {
+    // Update auction state safely
+    await setDoc(auctionRef, {
+      currentBid: newAmount,
+      currentBidderId: teamId,
+      currentBidderName: teamName,
+      currentBidderBadge: teamBadge,
+      timerRemaining: resetDuration,
+      isTimerRunning: true,
+      timerEndTime: now + resetDuration * 1000,
+      announcement: `Bid: ₹${newAmount.toLocaleString()} by ${teamName}`,
+      lastUpdated: now
+    }, { merge: true });
 
-  // Update player doc safely
-  await setDoc(playerRef, {
-    currentBid: newAmount,
-    currentBidderId: teamId,
-    currentBidderName: teamName
-  }, { merge: true });
+    // Update player doc safely
+    await setDoc(playerRef, {
+      currentBid: newAmount,
+      currentBidderId: teamId,
+      currentBidderName: teamName
+    }, { merge: true });
 
-  // Log bid into bids collection
-  await addDoc(collection(db, 'bids'), {
-    playerId,
-    playerName,
-    teamId,
-    teamName,
-    teamBadge,
-    amount: newAmount,
-    timestamp: now
-  });
+    // Log bid into bids collection
+    await addDoc(collection(db, 'bids'), {
+      playerId,
+      playerName,
+      teamId,
+      teamName,
+      teamBadge,
+      amount: newAmount,
+      timestamp: now
+    });
+  } catch (err: any) {
+    console.warn('Firestore placeBid warning, writing to Supabase mirror:', err?.message || err);
+  }
 
-  // Secondary dual-write to Supabase (non-blocking)
+  // Secondary dual-write to Supabase (guaranteed)
   mirrorAuctionState({
     currentBid: newAmount,
     currentBidderId: teamId,
@@ -327,38 +336,11 @@ export async function markSold(opts: {
 }): Promise<void> {
   const { playerId, playerName, playerRole, playerPhotoUrl, currentBid, currentBidderId, currentBidderName, currentBidderBadge } = opts;
 
-  // 1. Update player status
-  await setDoc(doc(db, 'players', playerId), {
-    status: 'sold',
-    soldToTeamId: currentBidderId,
-    soldToTeamName: currentBidderName,
-    soldPrice: currentBid
-  }, { merge: true });
-
-  // 2. Deduct purse and increment squad for the winning team
-  const teamRef = doc(db, 'teams', currentBidderId);
-  const teamSnap = await getDoc(teamRef);
   let updatedTeamPurse = 100000;
   let updatedSquadSize = 1;
   let updatedTotalSpent = currentBid;
   let updatedPlayerIds: string[] = [playerId];
 
-  if (teamSnap.exists()) {
-    const td = teamSnap.data() as TeamInfo;
-    updatedTeamPurse = Math.max(0, td.purseRemaining - currentBid);
-    updatedSquadSize = (td.squadSize || 0) + 1;
-    updatedTotalSpent = (td.totalSpent || 0) + currentBid;
-    updatedPlayerIds = [...(td.playerIds || []), playerId];
-
-    await updateDoc(teamRef, {
-      purseRemaining: updatedTeamPurse,
-      squadSize: updatedSquadSize,
-      playerIds: arrayUnion(playerId),
-      totalSpent: updatedTotalSpent
-    });
-  }
-
-  // 3. Broadcast to all screens: TV & all 12 mobile managers
   const now = Date.now();
   const lastSoldObj = {
     id: playerId,
@@ -372,15 +354,48 @@ export async function markSold(opts: {
     timestamp: now
   };
 
-  await setDoc(doc(db, 'auction', AUCTION_DOC_ID), {
-    currentPlayerId: null,
-    currentPlayerName: null,
-    isTimerRunning: false,
-    soldCount: increment(1),
-    announcement: `🎉 SOLD! ${playerName} recruited by ${currentBidderName} for ₹${currentBid.toLocaleString()}!`,
-    lastSoldPlayer: lastSoldObj,
-    lastUpdated: now
-  }, { merge: true });
+  try {
+    // 1. Update player status in Firestore
+    await setDoc(doc(db, 'players', playerId), {
+      status: 'sold',
+      soldToTeamId: currentBidderId,
+      soldToTeamName: currentBidderName,
+      soldPrice: currentBid
+    }, { merge: true });
+
+    // 2. Deduct purse and increment squad for the winning team
+    const teamRef = doc(db, 'teams', currentBidderId);
+    const teamSnap = await getDoc(teamRef);
+
+    if (teamSnap.exists()) {
+      const td = teamSnap.data() as TeamInfo;
+      updatedTeamPurse = Math.max(0, td.purseRemaining - currentBid);
+      updatedSquadSize = (td.squadSize || 0) + 1;
+      updatedTotalSpent = (td.totalSpent || 0) + currentBid;
+      updatedPlayerIds = [...(td.playerIds || []), playerId];
+
+      await updateDoc(teamRef, {
+        purseRemaining: updatedTeamPurse,
+        squadSize: updatedSquadSize,
+        playerIds: arrayUnion(playerId),
+        totalSpent: updatedTotalSpent
+      });
+    }
+
+    // 3. Broadcast to all screens
+    await setDoc(doc(db, 'auction', AUCTION_DOC_ID), {
+      currentPlayerId: null,
+      currentPlayerName: null,
+      currentPlayer: null,
+      isTimerRunning: false,
+      soldCount: increment(1),
+      announcement: `🎉 SOLD! ${playerName} recruited by ${currentBidderName} for ₹${currentBid.toLocaleString()}!`,
+      lastSoldPlayer: lastSoldObj,
+      lastUpdated: now
+    }, { merge: true });
+  } catch (err: any) {
+    console.warn('Firestore markSold warning, writing to Supabase mirror:', err?.message || err);
+  }
 
   // Secondary dual-write to Supabase (non-blocking)
   mirrorPlayer({
@@ -412,10 +427,6 @@ export async function markSold(opts: {
 // Mark player as UNSOLD
 export async function markUnsold(playerId: string, playerName: string): Promise<void> {
   const now = Date.now();
-  await setDoc(doc(db, 'players', playerId), {
-    status: 'unsold'
-  }, { merge: true });
-
   const unsoldObj = {
     id: playerId,
     name: playerName,
@@ -426,15 +437,24 @@ export async function markUnsold(playerId: string, playerName: string): Promise<
     timestamp: now
   };
 
-  await setDoc(doc(db, 'auction', AUCTION_DOC_ID), {
-    currentPlayerId: null,
-    currentPlayerName: null,
-    isTimerRunning: false,
-    unsoldCount: increment(1),
-    announcement: `❌ UNSOLD: ${playerName}`,
-    lastSoldPlayer: unsoldObj,
-    lastUpdated: now
-  }, { merge: true });
+  try {
+    await setDoc(doc(db, 'players', playerId), {
+      status: 'unsold'
+    }, { merge: true });
+
+    await setDoc(doc(db, 'auction', AUCTION_DOC_ID), {
+      currentPlayerId: null,
+      currentPlayerName: null,
+      currentPlayer: null,
+      isTimerRunning: false,
+      unsoldCount: increment(1),
+      announcement: `❌ UNSOLD: ${playerName}`,
+      lastSoldPlayer: unsoldObj,
+      lastUpdated: now
+    }, { merge: true });
+  } catch (err: any) {
+    console.warn('Firestore markUnsold warning, writing to Supabase mirror:', err?.message || err);
+  }
 
   // Secondary dual-write to Supabase (non-blocking)
   mirrorPlayer({

@@ -35,6 +35,10 @@ import {
 import {
   syncAllToSupabase,
   subscribeDbStatus,
+  forceDatabaseSource,
+  listenToAuctionState,
+  listenToTeams,
+  listenToPlayers,
   DbStatus
 } from '../../services/supabaseMirror.service';
 import { resolvePlayerPhoto, syncAllPlayerPhotosToFirestore, isFemalePlayer } from '../../utils/playerPhotoResolver';
@@ -201,25 +205,19 @@ export default function AdminDashboard() {
   useEffect(() => {
     const unsubStatus = subscribeDbStatus(setDbStatus);
 
-    const unsubAuction = onSnapshot(doc(db, 'auction', AUCTION_DOC_ID), (snap) => {
-      if (snap.exists()) {
-        setAuction(snap.data() as AuctionState);
-      }
+    const unsubAuction = listenToAuctionState((data) => {
+      setAuction(data);
     });
 
-    const unsubTeams = onSnapshot(collection(db, 'teams'), (snap) => {
-      if (!snap.empty) {
-        const teamList: TeamInfo[] = [];
-        snap.forEach(d => teamList.push(d.data() as TeamInfo));
+    const unsubTeams = listenToTeams((teamList) => {
+      if (teamList && teamList.length > 0) {
         setTeams(teamList);
       }
     });
 
-    const unsubPlayers = onSnapshot(collection(db, 'players'), (snap) => {
-      const plist: Player[] = [];
-      snap.forEach(d => plist.push({ id: d.id, ...d.data() } as Player));
-      plist.sort((a, b) => (a.auctionOrder || 0) - (b.auctionOrder || 0));
-      setAllPlayers(plist);
+    const unsubPlayers = listenToPlayers((plist) => {
+      const sorted = [...plist].sort((a, b) => (a.auctionOrder || 0) - (b.auctionOrder || 0));
+      setAllPlayers(sorted);
     });
 
     return () => {
@@ -1110,17 +1108,28 @@ export default function AdminDashboard() {
                   <span>{syncSupabaseLoading ? 'Syncing...' : 'Sync Supabase'}</span>
                 </button>
 
-                {/* Dual-Database Status Pill */}
-                <div className="hidden sm:flex items-center gap-2 bg-[#f4efe6] px-3 py-2 rounded-xl border border-[#cfa027]/50 text-[11px] font-bold shadow-inner">
-                  <div className="flex items-center gap-1.5" title="Primary Firebase Firestore connection status">
+                {/* Dual-Database Status Pill with Clickable Manual Override */}
+                <div
+                  onClick={() => {
+                    const next = dbStatus?.activeSource === 'firebase' ? 'supabase' : 'firebase';
+                    forceDatabaseSource(next);
+                    toast.success(`Active database switched to ${next.toUpperCase()}!`, { icon: '⚡' });
+                  }}
+                  className="hidden sm:flex items-center gap-2 bg-[#f4efe6] hover:bg-[#eae3d2] cursor-pointer px-3 py-2 rounded-xl border border-[#cfa027]/50 text-[11px] font-bold shadow-inner transition select-none"
+                  title="Click to toggle active database between Firebase and Supabase"
+                >
+                  <div className="flex items-center gap-1.5">
                     <span className={`w-2 h-2 rounded-full ${dbStatus?.firebaseHealthy ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
-                    <span className="text-[#540816]">Firebase</span>
+                    <span className={dbStatus?.activeSource === 'firebase' ? 'text-[#540816] font-black underline decoration-[#cfa027]' : 'text-slate-500'}>Firebase</span>
                   </div>
                   <span className="text-[#cfa027]/70 font-mono">⇄</span>
-                  <div className="flex items-center gap-1.5" title={dbStatus?.supabaseHealthy ? 'Supabase secondary mirror active and in-sync' : 'Supabase secondary mirror warning'}>
+                  <div className="flex items-center gap-1.5">
                     <span className={`w-2 h-2 rounded-full ${dbStatus?.supabaseHealthy ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-                    <span className="text-indigo-950">Supabase</span>
+                    <span className={dbStatus?.activeSource === 'supabase' ? 'text-indigo-950 font-black underline decoration-indigo-500' : 'text-slate-500'}>Supabase</span>
                   </div>
+                  <span className="text-[9px] bg-[#540816]/10 text-[#540816] px-1.5 py-0.5 rounded font-mono uppercase font-black">
+                    {dbStatus?.activeSource || 'firebase'}
+                  </span>
                 </div>
 
                 <button

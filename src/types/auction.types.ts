@@ -1,3 +1,5 @@
+import { Player } from './player.types';
+
 export type AuctionStatus = 'idle' | 'running' | 'paused' | 'completed';
 
 export interface SoldPlayerSummary {
@@ -16,6 +18,7 @@ export interface AuctionState {
   status: AuctionStatus;
   currentPlayerId: string | null;
   currentPlayerName: string | null;
+  currentPlayer?: Player | null;
   currentBid: number;
   currentBidderId: string | null;
   currentBidderName: string | null;

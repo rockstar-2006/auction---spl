@@ -5,7 +5,8 @@ import {
   onSnapshot,
   collection,
   query,
-  orderBy
+  orderBy,
+  limit
 } from 'firebase/firestore';
 import { AUCTION_DOC_ID } from '../../services/auction.service';
 import {
@@ -94,7 +95,7 @@ export default function AuctionView() {
       return;
     }
 
-    const bidsQ = query(collection(db, 'bids'), orderBy('timestamp', 'desc'));
+    const bidsQ = query(collection(db, 'bids'), orderBy('timestamp', 'desc'), limit(20));
     const unsubBids = onSnapshot(bidsQ, (snap) => {
       const blist: BidLog[] = [];
       snap.forEach(d => {
@@ -114,6 +115,11 @@ export default function AuctionView() {
       setCurrentPlayer(null);
       return;
     }
+    // High-performance optimization: If auction doc already embeds the currentPlayer, use zero reads!
+    if (auction.currentPlayer && auction.currentPlayer.id === auction.currentPlayerId) {
+      setCurrentPlayer(auction.currentPlayer);
+      return;
+    }
     const found = allPlayers.find(p => p.id === auction.currentPlayerId);
     if (found) {
       setCurrentPlayer(found);
@@ -125,7 +131,7 @@ export default function AuctionView() {
       }, () => {});
       return () => unsubPlayer();
     }
-  }, [auction?.currentPlayerId, allPlayers]);
+  }, [auction?.currentPlayerId, auction?.currentPlayer, allPlayers]);
 
   // Sync squad players whenever myTeam or allPlayers changes
   useEffect(() => {
