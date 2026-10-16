@@ -34,8 +34,12 @@ import {
   Download,
   FileSpreadsheet,
   CheckCircle,
-  Flame
+  Flame,
+  FileText,
+  FileDown
 } from 'lucide-react';
+import { downloadTeamSquadWordDoc, getTeamSquadPlayers } from '../../utils/wordExport';
+import { downloadTeamSquadPdf } from '../../utils/pdfExport';
 import splBanner from '../../../image.png';
 
 declare global {
@@ -55,6 +59,8 @@ export default function AuctionView() {
   const [showSquadModal, setShowSquadModal] = useState(false);
   const [failedImages, setFailedImages] = useState<Record<string, boolean>>({});
   const [dbStatus, setDbStatus] = useState<DbStatus | null>(null);
+  const [wordExportLoading, setWordExportLoading] = useState(false);
+  const [pdfExportLoading, setPdfExportLoading] = useState(false);
 
   const currentTeamId = user?.teamId || 'team_thunderbolts';
 
@@ -135,13 +141,13 @@ export default function AuctionView() {
 
   // Sync squad players whenever myTeam or allPlayers changes
   useEffect(() => {
-    if (!myTeam?.playerIds || myTeam.playerIds.length === 0) {
+    if (!myTeam) {
       setMySquadPlayers([]);
       return;
     }
-    const squad = allPlayers.filter(p => myTeam.playerIds.includes(p.id));
+    const squad = getTeamSquadPlayers(myTeam, allPlayers);
     setMySquadPlayers(squad);
-  }, [myTeam?.playerIds, allPlayers]);
+  }, [myTeam, allPlayers]);
 
   useEffect(() => {
     setFailedImages({});
@@ -225,6 +231,48 @@ export default function AuctionView() {
       link.click();
       document.body.removeChild(link);
       toast.success(`Downloaded ${myTeam?.name} Squad CSV!`);
+    }
+  };
+
+  // 1-Click Word Document (.doc) Squad Downloader
+  const handleDownloadSquadWordDoc = async () => {
+    if (mySquadPlayers.length === 0) {
+      toast.error('Your team has not recruited any players yet!');
+      return;
+    }
+    if (!myTeam) return;
+
+    try {
+      setWordExportLoading(true);
+      toast.loading('Generating official Word document...', { id: 'squad-word' });
+      await downloadTeamSquadWordDoc(myTeam, mySquadPlayers);
+      toast.success(`Downloaded official Word Document for ${myTeam.name}!`, { id: 'squad-word' });
+    } catch (err: any) {
+      console.error('Word export error:', err);
+      toast.error('Failed to generate Word document: ' + (err?.message || err), { id: 'squad-word' });
+    } finally {
+      setWordExportLoading(false);
+    }
+  };
+
+  // 1-Click PDF Document (.pdf) Squad Downloader
+  const handleDownloadSquadPdf = async () => {
+    if (mySquadPlayers.length === 0) {
+      toast.error('Your team has not recruited any players yet!');
+      return;
+    }
+    if (!myTeam) return;
+
+    try {
+      setPdfExportLoading(true);
+      toast.loading('Generating official PDF squad sheet...', { id: 'squad-pdf' });
+      await downloadTeamSquadPdf(myTeam, mySquadPlayers);
+      toast.success(`Downloaded official PDF for ${myTeam.name}!`, { id: 'squad-pdf' });
+    } catch (err: any) {
+      console.error('PDF export error:', err);
+      toast.error('Failed to generate PDF: ' + (err?.message || err), { id: 'squad-pdf' });
+    } finally {
+      setPdfExportLoading(false);
     }
   };
 
@@ -540,14 +588,34 @@ export default function AuctionView() {
               </h3>
             </div>
 
-            <button
-              onClick={handleDownloadSquadExcel}
-              disabled={mySquadPlayers.length === 0}
-              className="bg-[#540816] hover:bg-[#6e0b1f] disabled:opacity-40 text-[#ffd700] border border-[#cfa027] font-display font-black text-xs uppercase px-4 py-2 rounded-xl shadow transition flex items-center gap-1.5 cursor-pointer"
-            >
-              <Download className="w-4 h-4" />
-              <span>Download Squad Excel</span>
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={handleDownloadSquadPdf}
+                disabled={mySquadPlayers.length === 0 || pdfExportLoading}
+                className="bg-gradient-to-r from-emerald-700 to-teal-800 hover:from-emerald-800 hover:to-teal-900 disabled:opacity-40 text-white font-display font-black text-xs uppercase px-4 py-2 rounded-xl shadow transition flex items-center gap-1.5 cursor-pointer active:scale-95"
+                title="Download official PDF (.pdf) with complete squad details and signatures"
+              >
+                <FileDown className="w-4 h-4 text-emerald-200" />
+                <span>{pdfExportLoading ? 'Generating...' : '📑 Download PDF (.pdf)'}</span>
+              </button>
+              <button
+                onClick={handleDownloadSquadWordDoc}
+                disabled={mySquadPlayers.length === 0 || wordExportLoading}
+                className="bg-gradient-to-r from-blue-700 to-indigo-800 hover:from-blue-800 hover:to-indigo-900 disabled:opacity-40 text-white font-display font-black text-xs uppercase px-4 py-2 rounded-xl shadow transition flex items-center gap-1.5 cursor-pointer active:scale-95"
+                title="Download official Word Document (.doc) with complete squad details and signatures"
+              >
+                <FileText className="w-4 h-4 text-blue-200" />
+                <span>{wordExportLoading ? 'Generating...' : '📄 Download Word Doc (.doc)'}</span>
+              </button>
+              <button
+                onClick={handleDownloadSquadExcel}
+                disabled={mySquadPlayers.length === 0}
+                className="bg-[#540816] hover:bg-[#6e0b1f] disabled:opacity-40 text-[#ffd700] border border-[#cfa027] font-display font-black text-xs uppercase px-4 py-2 rounded-xl shadow transition flex items-center gap-1.5 cursor-pointer"
+              >
+                <Download className="w-4 h-4" />
+                <span>Export Excel</span>
+              </button>
+            </div>
           </div>
 
           {mySquadPlayers.length > 0 ? (
@@ -662,14 +730,34 @@ export default function AuctionView() {
                 <span className="text-[#645d57] font-semibold">Remaining Purse: </span>
                 <strong className="text-emerald-700 font-mono text-sm font-black">₹ {purseRemaining.toLocaleString()}</strong>
               </div>
-              <button
-                onClick={handleDownloadSquadExcel}
-                disabled={mySquadPlayers.length === 0}
-                className="px-3 py-1.5 bg-[#540816] text-[#ffd700] rounded-lg font-bold flex items-center gap-1.5 disabled:opacity-40"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>Export Excel</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleDownloadSquadPdf}
+                  disabled={mySquadPlayers.length === 0 || pdfExportLoading}
+                  className="px-3 py-1.5 bg-gradient-to-r from-emerald-700 to-teal-800 text-white rounded-lg font-bold flex items-center gap-1.5 disabled:opacity-40 cursor-pointer active:scale-95"
+                  title="Download PDF (.pdf)"
+                >
+                  <FileDown className="w-3.5 h-3.5 text-emerald-200" />
+                  <span>PDF</span>
+                </button>
+                <button
+                  onClick={handleDownloadSquadWordDoc}
+                  disabled={mySquadPlayers.length === 0 || wordExportLoading}
+                  className="px-3 py-1.5 bg-gradient-to-r from-blue-700 to-indigo-800 text-white rounded-lg font-bold flex items-center gap-1.5 disabled:opacity-40 cursor-pointer active:scale-95"
+                  title="Download Word Document (.doc)"
+                >
+                  <FileText className="w-3.5 h-3.5 text-blue-200" />
+                  <span>Word Doc</span>
+                </button>
+                <button
+                  onClick={handleDownloadSquadExcel}
+                  disabled={mySquadPlayers.length === 0}
+                  className="px-3 py-1.5 bg-[#540816] text-[#ffd700] rounded-lg font-bold flex items-center gap-1.5 disabled:opacity-40 cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Excel</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>

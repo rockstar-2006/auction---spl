@@ -88,9 +88,13 @@ import {
   Palette,
   Upload,
   Database,
-  Coins
+  Coins,
+  FileText,
+  FileDown
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { downloadTeamSquadWordDoc, downloadAllTeamsWordDoc, getTeamSquadPlayers } from '../../utils/wordExport';
+import { downloadTeamSquadPdf, downloadAllTeamsPdfSeparately } from '../../utils/pdfExport';
 import splBanner from '../../../image.png';
 
 function compressImage(file: File, maxDim = 600, quality = 0.82): Promise<string> {
@@ -214,6 +218,10 @@ export default function AdminDashboard() {
 
   // Player Reset Action State
   const [playerResetLoading, setPlayerResetLoading] = useState(false);
+
+  // Word & PDF Document Export State
+  const [wordExportLoading, setWordExportLoading] = useState(false);
+  const [pdfExportLoading, setPdfExportLoading] = useState(false);
 
   useEffect(() => {
     const unsubStatus = subscribeDbStatus(setDbStatus);
@@ -948,6 +956,68 @@ export default function AdminDashboard() {
   const handleOpenInspectSquad = (team: TeamInfo) => {
     setInspectTeam(team);
     setShowSquadInspectModal(true);
+  };
+
+  const handleDownloadAllTeamsDoc = async () => {
+    try {
+      setWordExportLoading(true);
+      toast.loading('Starting download of 12 separate Word Docs...', { id: 'word-export' });
+      await downloadAllTeamsWordDoc(teams, allPlayers, (teamName, idx, total) => {
+        toast.loading(`Downloading ${teamName} (${idx}/${total})...`, { id: 'word-export' });
+      });
+      toast.success('Downloaded all 12 teams as separate Word documents (.doc)!', { id: 'word-export' });
+    } catch (err: any) {
+      console.error('Word export error:', err);
+      toast.error('Failed to generate Word documents: ' + (err?.message || err), { id: 'word-export' });
+    } finally {
+      setWordExportLoading(false);
+    }
+  };
+
+  const handleDownloadTeamSquadDoc = async (team: TeamInfo) => {
+    try {
+      setWordExportLoading(true);
+      toast.loading(`Generating Word document for ${team.name}...`, { id: 'team-word-export' });
+      const squad = getTeamSquadPlayers(team, allPlayers);
+      await downloadTeamSquadWordDoc(team, squad);
+      toast.success(`Downloaded Word Document for ${team.name}!`, { id: 'team-word-export' });
+    } catch (err: any) {
+      console.error('Word export error:', err);
+      toast.error('Failed to generate Word document: ' + (err?.message || err), { id: 'team-word-export' });
+    } finally {
+      setWordExportLoading(false);
+    }
+  };
+
+  const handleDownloadTeamSquadPdf = async (team: TeamInfo) => {
+    try {
+      setPdfExportLoading(true);
+      toast.loading(`Generating PDF for ${team.name}...`, { id: 'team-pdf' });
+      const squad = getTeamSquadPlayers(team, allPlayers);
+      await downloadTeamSquadPdf(team, squad);
+      toast.success(`Downloaded official PDF for ${team.name}!`, { id: 'team-pdf' });
+    } catch (err: any) {
+      console.error('PDF export error:', err);
+      toast.error('Failed to generate PDF: ' + (err?.message || err), { id: 'team-pdf' });
+    } finally {
+      setPdfExportLoading(false);
+    }
+  };
+
+  const handleDownloadAllTeamsPdf = async () => {
+    try {
+      setPdfExportLoading(true);
+      toast.loading('Starting download of 12 separate PDFs...', { id: 'all-pdf' });
+      await downloadAllTeamsPdfSeparately(teams, allPlayers, (teamName, idx, total) => {
+        toast.loading(`Generating PDF: ${teamName} (${idx}/${total})...`, { id: 'all-pdf' });
+      });
+      toast.success('Downloaded all 12 teams as separate PDF documents (.pdf)!', { id: 'all-pdf' });
+    } catch (err: any) {
+      console.error('PDF export error:', err);
+      toast.error('Failed to generate PDFs: ' + (err?.message || err), { id: 'all-pdf' });
+    } finally {
+      setPdfExportLoading(false);
+    }
   };
 
   const filteredPlayers = allPlayers.filter(p => {
@@ -2199,6 +2269,24 @@ export default function AdminDashboard() {
 
               <div className="flex flex-wrap items-center gap-3">
                 <button
+                  onClick={handleDownloadAllTeamsPdf}
+                  disabled={pdfExportLoading}
+                  className="bg-gradient-to-r from-emerald-700 via-teal-700 to-emerald-800 hover:from-emerald-800 hover:to-teal-900 text-white font-bold px-5 py-2.5 rounded-xl shadow-md flex items-center gap-2 transition active:scale-95 cursor-pointer text-xs uppercase tracking-wider border border-emerald-400/30 disabled:opacity-50"
+                  title="Download all 12 teams as separate PDF documents (.pdf) with clean tables"
+                >
+                  <FileDown className="w-4 h-4 text-emerald-200" />
+                  <span>{pdfExportLoading ? 'Downloading PDFs...' : '📑 Download All 12 Teams (PDFs)'}</span>
+                </button>
+                <button
+                  onClick={handleDownloadAllTeamsDoc}
+                  disabled={wordExportLoading}
+                  className="bg-gradient-to-r from-blue-700 via-indigo-700 to-blue-800 hover:from-blue-800 hover:to-indigo-900 text-white font-bold px-5 py-2.5 rounded-xl shadow-md flex items-center gap-2 transition active:scale-95 cursor-pointer text-xs uppercase tracking-wider border border-blue-400/30 disabled:opacity-50"
+                  title="Download all 12 teams as separate Word documents (.doc) with clean tables"
+                >
+                  <FileText className="w-4 h-4 text-blue-200" />
+                  <span>{wordExportLoading ? 'Downloading Teams...' : '📄 Download All 12 Teams (Word)'}</span>
+                </button>
+                <button
                   onClick={handleCopyCredentials}
                   className="bg-[#540816] hover:bg-[#6e0b1f] text-[#ffd700] border border-[#cfa027] font-bold px-5 py-2.5 rounded-xl shadow-md flex items-center gap-2 transition active:scale-95 cursor-pointer text-xs uppercase tracking-wider"
                 >
@@ -2298,19 +2386,37 @@ export default function AdminDashboard() {
                       </div>
                     </div>
 
-                    {/* Team Action Buttons: View Squad, Adjust Purse, Edit, Reset */}
-                    <div className="grid grid-cols-4 gap-1.5 mt-2 pt-3 border-t border-[#e5ded1]">
+                    {/* Team Action Buttons: View Squad, Download Word, Download PDF, Adjust Purse, Edit, Reset */}
+                    <div className="grid grid-cols-6 gap-1 mt-2 pt-3 border-t border-[#e5ded1]">
                       <button
                         onClick={() => handleOpenInspectSquad(t)}
-                        className="py-2 px-1 bg-[#540816] hover:bg-[#6e0b1f] text-[#ffd700] rounded-xl text-[11px] font-bold flex items-center justify-center gap-0.5 transition active:scale-95 cursor-pointer shadow-sm"
+                        className="py-2 px-0.5 bg-[#540816] hover:bg-[#6e0b1f] text-[#ffd700] rounded-xl text-[10px] font-bold flex items-center justify-center gap-0.5 transition active:scale-95 cursor-pointer shadow-sm"
                         title="View full player squad for this team"
                       >
                         <Users className="w-3 h-3" />
                         <span>Squad</span>
                       </button>
                       <button
+                        onClick={() => handleDownloadTeamSquadDoc(t)}
+                        disabled={wordExportLoading}
+                        className="py-2 px-0.5 bg-gradient-to-r from-blue-700 to-indigo-800 hover:from-blue-800 hover:to-indigo-900 text-white rounded-xl text-[10px] font-bold flex items-center justify-center gap-0.5 transition active:scale-95 cursor-pointer shadow-sm disabled:opacity-50"
+                        title={`Download separate Word Document (.doc) for ${t.name}`}
+                      >
+                        <FileText className="w-3 h-3 text-blue-200" />
+                        <span>Word</span>
+                      </button>
+                      <button
+                        onClick={() => handleDownloadTeamSquadPdf(t)}
+                        disabled={pdfExportLoading}
+                        className="py-2 px-0.5 bg-gradient-to-r from-emerald-700 to-teal-800 hover:from-emerald-800 hover:to-teal-900 text-white rounded-xl text-[10px] font-bold flex items-center justify-center gap-0.5 transition active:scale-95 cursor-pointer shadow-sm disabled:opacity-50"
+                        title={`Download official PDF (.pdf) for ${t.name}`}
+                      >
+                        <FileDown className="w-3 h-3 text-emerald-200" />
+                        <span>PDF</span>
+                      </button>
+                      <button
                         onClick={() => handleOpenPurseAdjust(t)}
-                        className="py-2 px-1 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-[11px] font-bold flex items-center justify-center gap-0.5 transition active:scale-95 cursor-pointer shadow-sm"
+                        className="py-2 px-0.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-[10px] font-bold flex items-center justify-center gap-0.5 transition active:scale-95 cursor-pointer shadow-sm"
                         title="Quick add or adjust purse money for this team"
                       >
                         <Coins className="w-3 h-3" />
@@ -2318,7 +2424,7 @@ export default function AdminDashboard() {
                       </button>
                       <button
                         onClick={() => handleOpenEditTeam(t)}
-                        className="py-2 px-1 bg-[#f4efe6] hover:bg-[#ebdcc4] text-[#540816] border border-[#cfa027]/50 rounded-xl text-[11px] font-bold flex items-center justify-center gap-0.5 transition active:scale-95 cursor-pointer shadow-sm"
+                        className="py-2 px-0.5 bg-[#f4efe6] hover:bg-[#ebdcc4] text-[#540816] border border-[#cfa027]/50 rounded-xl text-[10px] font-bold flex items-center justify-center gap-0.5 transition active:scale-95 cursor-pointer shadow-sm"
                         title="Edit team name, badge, colors, purse"
                       >
                         <Edit2 className="w-3 h-3" />
@@ -2326,7 +2432,7 @@ export default function AdminDashboard() {
                       </button>
                       <button
                         onClick={() => handleOpenTeamReset(t)}
-                        className="py-2 px-1 bg-amber-50 hover:bg-amber-100 text-[#540816] border border-amber-300 rounded-xl text-[11px] font-bold flex items-center justify-center gap-0.5 transition active:scale-95 cursor-pointer shadow-sm"
+                        className="py-2 px-0.5 bg-amber-50 hover:bg-amber-100 text-[#540816] border border-amber-300 rounded-xl text-[10px] font-bold flex items-center justify-center gap-0.5 transition active:scale-95 cursor-pointer shadow-sm"
                         title="Reset purse for this team"
                       >
                         <RotateCcw className="w-3 h-3 text-[#997316]" />
@@ -2998,9 +3104,7 @@ export default function AdminDashboard() {
 
       {/* ================= MODAL: VIEW TEAM SQUAD ================= */}
       {showSquadInspectModal && inspectTeam && (() => {
-        const recruitedPlayers = allPlayers.filter(
-          p => p.soldToTeamId === inspectTeam.id || p.soldToTeamName === inspectTeam.name
-        );
+        const recruitedPlayers = getTeamSquadPlayers(inspectTeam, allPlayers);
         const squadCount = recruitedPlayers.length;
         const compulsoryNeeded = Math.max(0, 12 - squadCount);
 
@@ -3106,7 +3210,31 @@ export default function AdminDashboard() {
               </div>
 
               {/* Footer */}
-              <div className="p-4 bg-[#f8f6f0] border-t border-[#e5ded1] flex items-center justify-end">
+              <div className="p-4 bg-[#f8f6f0] border-t border-[#e5ded1] flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    disabled={pdfExportLoading}
+                    onClick={() => handleDownloadTeamSquadPdf(inspectTeam)}
+                    className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-emerald-700 to-teal-800 hover:from-emerald-800 hover:to-teal-900 text-white rounded-xl text-xs font-bold shadow transition cursor-pointer active:scale-95 disabled:opacity-50"
+                    title="Download official PDF (.pdf) with complete squad details for this team"
+                  >
+                    <FileDown className="w-4 h-4 text-emerald-200" />
+                    <span>{pdfExportLoading ? 'Generating PDF...' : '📑 Download PDF (.pdf)'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={wordExportLoading}
+                    onClick={() => handleDownloadTeamSquadDoc(inspectTeam)}
+                    className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-700 to-indigo-800 hover:from-blue-800 hover:to-indigo-900 text-white rounded-xl text-xs font-bold shadow transition cursor-pointer active:scale-95 disabled:opacity-50"
+                    title="Download official Word Document (.doc) with complete squad details for this team"
+                  >
+                    <FileText className="w-4 h-4 text-blue-200" />
+                    <span>{wordExportLoading ? 'Generating...' : '📄 Word Doc (.doc)'}</span>
+                  </button>
+                </div>
+
                 <button
                   onClick={() => setShowSquadInspectModal(false)}
                   className="px-5 py-2 bg-[#540816] hover:bg-[#6e0b1f] text-[#ffd700] border border-[#cfa027] rounded-xl text-xs font-display font-black uppercase tracking-wider transition cursor-pointer"
